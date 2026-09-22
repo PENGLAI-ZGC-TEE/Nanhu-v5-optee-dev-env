@@ -1,0 +1,121 @@
+// SPDX-License-Identifier: (GPL-2.0 OR MIT)
+
+/dts-v1/;
+
+/ {
+	model = "OpenXiangShan Nanhu V5 QEMU";
+	compatible = "openxiangshan,nanhu-v5";
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		timebase-frequency = <1000000>;
+
+		cpu0: cpu@0 {
+			compatible = "openxiangshan,nanhu-v5", "riscv";
+			device_type = "cpu";
+			reg = <0>;
+			status = "okay";
+			riscv,isa = "rv64imafdc";
+			mmu-type = "riscv,sv39";
+			opensbi-domain = <&tdomain>;
+
+			cpu0_intc: interrupt-controller {
+				compatible = "riscv,cpu-intc";
+				#address-cells = <0>;
+				#interrupt-cells = <1>;
+				interrupt-controller;
+			};
+		};
+	};
+
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0x0 0x80000000 0x2 0x00000000>;
+	};
+
+	soc {
+		compatible = "simple-bus";
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		clint@38000000 {
+			compatible = "riscv,clint0";
+			reg = <0x0 0x38000000 0x0 0x10000>;
+			interrupts-extended = <&cpu0_intc 3 &cpu0_intc 7>;
+		};
+
+		plic: interrupt-controller@3c000000 {
+			compatible = "riscv,plic0";
+			reg = <0x0 0x3c000000 0x0 0x4000000>;
+			#address-cells = <0>;
+			#interrupt-cells = <1>;
+			interrupt-controller;
+			interrupts-extended = <&cpu0_intc 11 &cpu0_intc 9>;
+			riscv,max-priority = <7>;
+			riscv,ndev = <255>;
+		};
+
+		uart0: serial@310b0000 {
+			compatible = "ns16550a";
+			reg = <0x0 0x310b0000 0x0 0x10000>;
+			reg-shift = <2>;
+			reg-io-width = <4>;
+			interrupt-parent = <&plic>;
+			interrupts = <40>;
+			clock-frequency = <50000000>;
+			status = "okay";
+		};
+	};
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		bootargs = "console=ttyS0,115200 earlycon=uart8250,mmio32,0x310b0000,115200";
+		stdout-path = "serial0:115200n8";
+
+		opensbi-domains {
+			compatible = "opensbi,domain,config";
+
+			tmem: tmem {
+				compatible = "opensbi,domain,memregion";
+				base = <0x0 0x81000000>;
+				order = <24>;
+			};
+
+			allmem: allmem {
+				compatible = "opensbi,domain,memregion";
+				base = <0x0 0x0>;
+				order = <64>;
+			};
+
+			tdomain: trusted-domain {
+				compatible = "opensbi,domain,instance";
+				possible-harts = <&cpu0>;
+				regions = <&allmem 0x3f>;
+				next-addr = <0x0 0x81000000>;
+				next-mode = <0x1>;
+			};
+
+			udomain: untrusted-domain {
+				compatible = "opensbi,domain,instance";
+				possible-harts = <&cpu0>;
+				regions = <&tmem 0x0>, <&allmem 0x3f>;
+				boot-hart = <&cpu0>;
+				next-addr = <0x0 0x82000000>;
+				next-mode = <0x1>;
+			};
+		};
+	};
+
+	sbi-mpxy-opteed {
+		opensbi-domain-instance = <&tdomain>;
+		riscv,sbi-mpxy-channel-id = <0x02>;
+		compatible = "riscv,sbi-mpxy-opteed";
+	};
+};

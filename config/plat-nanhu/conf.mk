@@ -33,7 +33,7 @@ $(call force,CFG_RISCV_PLIC,y)
 $(call force,CFG_RISCV_SBI_CONSOLE,y)
 $(call force,CFG_16550_UART,n)
 $(call force,CFG_RISCV_TIME_SOURCE_RDTIME,y) # Maybe Nanhu-v3a doesn't support 0xC01 CSR
-CFG_RISCV_MTIME_RATE := 10000000
+CFG_RISCV_MTIME_RATE := 1000000
 
 # TA-related flags
 supported-ta-targets := ta_rv64

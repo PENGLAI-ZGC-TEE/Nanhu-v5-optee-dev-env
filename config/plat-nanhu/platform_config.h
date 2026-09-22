@@ -2,7 +2,7 @@
 /*
  * Copyright 2022-2023 NXP
  *
- * Brief   BOSC Xiangshan Nanhu-v3a platform configuration.
+ * Brief   OpenXiangShan Nanhu V5 platform configuration.
  */
 
 #ifndef PLATFORM_CONFIG_H
@@ -29,7 +29,7 @@
 #ifndef PLIC_BASE
 #define PLIC_BASE		0x3c000000
 #define PLIC_REG_SIZE		0x4000000
-#define PLIC_NUM_SOURCES	64
+#define PLIC_NUM_SOURCES	255
 #endif
 
 /* UART0 */

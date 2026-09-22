@@ -10,8 +10,8 @@ qemu_srcdir := $(CURRENT_DIR)/qemu
 qemu_builddir := $(BUILD_DIR)/qemu
 qemu_target := $(qemu_builddir)/qemu-system-riscv64
 qemu_config_args := --target-list=riscv64-softmmu
-qemu_machine := -machine bosc-nanhu
-qemu_args := -cpu bosc-nanhu -smp 1 -m 8G
+qemu_machine := -machine xiangshan-nanhuv5
+qemu_args := -cpu xiangshan-nanhuv5 -smp 1 -m 8G
 
 # Linux Variables
 linux_srcdir := $(CURRENT_DIR)/linux
@@ -21,15 +21,17 @@ linux_vmlinux := $(linux_builddir)/vmlinux
 linux_image := $(linux_builddir)/arch/riscv/boot/Image
 linux_start := 0x82000000
 linux_offset := 0x2000000
+fdt_start := 0x88000000
 
 
 # Rootfs Variables
 rootfs_srcdir := $(CURRENT_DIR)/rootfs
 rootfs_target := $(CONFIG_DIR)/rootfs_nopasswd.cpio
+rootfs_archive := $(rootfs_target).gz
 
 # Device Tree Variables
-dts_file := $(CONFIG_DIR)/nanhu-v3a.dts
-dtb_file := $(BUILD_DIR)/nanhu-v3a.dtb
+dts_file := $(CONFIG_DIR)/nanhu-v5.dts
+dtb_file := $(BUILD_DIR)/nanhu-v5.dtb
 
 # OP-TEE Variables
 optee_os_srcdir := $(CURRENT_DIR)/optee_os
@@ -60,13 +62,14 @@ merge_payload_bin := $(BUILD_DIR)/merge_payload.bin
 all: help
 
 help:
-	@echo "Makefile for developing and testing the OP-TEE OS on BOSC Xiangshan Nanhu-v3a platform"
+	@echo "Makefile for Linux and OP-TEE on OpenXiangShan Nanhu V5"
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
 	@echo "  help             Display help messages"
 	@echo "  qemu             Build QEMU"
 	@echo "  linux            Build Linux kernel"
+	@echo "  linux-image      Build the Linux Image needed by QEMU"
 	@echo "  optee_os         Build OP-TEE OS"
 	@echo "  opensbi-jump     Build OpenSBI with jump pattern"
 	@echo "  opensbi-payload  Build OpensSBI with payload pattern"
@@ -74,6 +77,8 @@ help:
 	@echo "  rootfs-extract   Extract root filesystem from cpio archive"
 	@echo "  rootfs-pack      Pack root filesystem into cpio archive"
 	@echo "  run-jump         Run QEMU with one built images, but it's just a jump, won't be packaged together"
+	@echo "  run-tee          Run Nanhu V5 Linux with OP-TEE"
+	@echo "  run-linux        Run Nanhu V5 Linux without OP-TEE"
 	@echo "  run-payload      Run QEMU with one built images, it will be packaged together"
 	@echo "  run-fpga         Run QEMU with two built images, opensbi + Linux + optee will be merged"
 	@echo "  merge            Merge OpensSBI Linux Op-TEE into one bin according to the specified address range"
@@ -104,6 +109,9 @@ $(qemu_builddir)/config-host.mak:
 # rootfs
 ###########
 .PHONY: rootfs-extract rootfs-pack
+$(rootfs_target): $(rootfs_archive)
+	gzip -dc $< > $@
+
 rootfs-extract: $(rootfs_target)
 	rm -rf $(rootfs_srcdir)
 	mkdir -p $(rootfs_srcdir)
@@ -116,25 +124,40 @@ rootfs-pack: $(rootfs_srcdir)
 ###########
 # linux
 ###########
-.PHONY: linux
+.PHONY: linux linux-image
 linux: $(linux_builddir)/.config $(rootfs_target)
-	cp -f $(rootfs_target) $(linux_srcdir)/
+	$(linux_srcdir)/scripts/config --file $(linux_builddir)/.config \
+		--set-str INITRAMFS_SOURCE $(rootfs_target)
 	$(MAKE) -C $(linux_srcdir) O=$(linux_builddir) -j $(NPROC) \
-	ARCH=riscv CROSS_COMPILE=$(CROSS_COMPILE)
-	rm -f $(linux_srcdir)/rootfs_nopasswd.cpio
+		ARCH=riscv CROSS_COMPILE=$(CROSS_COMPILE) olddefconfig
+	$(MAKE) -C $(linux_srcdir) O=$(linux_builddir) -j $(NPROC) \
+		ARCH=riscv CROSS_COMPILE=$(CROSS_COMPILE)
 
-$(linux_builddir)/.config:
-	mkdir -p $(dir $@)
-	cp -f $(linux_config) $(linux_srcdir)/arch/riscv/configs/
+linux-image: $(linux_builddir)/.config $(rootfs_target)
+	$(linux_srcdir)/scripts/config --file $(linux_builddir)/.config \
+		--set-str INITRAMFS_SOURCE $(rootfs_target)
 	$(MAKE) -C $(linux_srcdir) O=$(linux_builddir) -j $(NPROC) \
-	ARCH=riscv CROSS_COMPILE=$(CROSS_COMPILE) defconfig xiangshan.config
-	rm -f $(linux_srcdir)/arch/riscv/configs/xiangshan.config
+		ARCH=riscv CROSS_COMPILE=$(CROSS_COMPILE) olddefconfig
+	$(MAKE) -C $(linux_srcdir) O=$(linux_builddir) -j $(NPROC) \
+		ARCH=riscv CROSS_COMPILE=$(CROSS_COMPILE) Image
+
+$(linux_builddir)/.config: $(linux_config) Makefile
+	mkdir -p $(dir $@)
+	$(MAKE) -C $(linux_srcdir) O=$(linux_builddir) -j $(NPROC) \
+		ARCH=riscv CROSS_COMPILE=$(CROSS_COMPILE) defconfig
+	$(linux_srcdir)/scripts/kconfig/merge_config.sh -m \
+		-O $(linux_builddir) $@ $(linux_config)
+	$(MAKE) -C $(linux_srcdir) O=$(linux_builddir) -j $(NPROC) \
+		ARCH=riscv CROSS_COMPILE=$(CROSS_COMPILE) olddefconfig
 
 ###########
 # DTB
 ###########
 .PHONY: dtb
-dtb:
+dtb: $(dtb_file)
+
+$(dtb_file): $(dts_file)
+	mkdir -p $(dir $@)
 	dtc -I dts -O dtb -o $(dtb_file) $(dts_file)
 
 ###########
@@ -173,9 +196,10 @@ opensbi-jump: $(dtb_file)
 	PLATFORM=generic \
 	FW_TEXT_START=$(opensbi_start) \
 	FW_FDT_PATH=$(dtb_file) \
+	FW_JUMP_FDT_ADDR=$(fdt_start) \
 	FW_JUMP_ADDR=$(optee_os_start)
 
-opensbi-payload: $(dtb_file)
+opensbi-payload: linux-image $(dtb_file)
 	mkdir -p $(opensbi_builddir)
 	$(MAKE) -C $(opensbi_srcdir) O=$(opensbi_builddir) -j $(NPROC) \
 	CROSS_COMPILE=$(CROSS_COMPILE) \
@@ -185,14 +209,15 @@ opensbi-payload: $(dtb_file)
 	FW_PAYLOAD=y \
 	FW_PAYLOAD_PATH=$(linux_image) \
 	FW_PAYLOAD_ALIGN=0x100000 \
+	FW_PAYLOAD_FDT_ADDR=$(fdt_start) \
 	FW_PAYLOAD_OFFSET=0x2000000
 
 
 ##########
 # run
 ##########
-.PHONY: run-jump run-payload run-fpga
-run-jump: $(opensbi_jump_bin) $(optee_os_bin) $(linux_image)
+.PHONY: run-jump run-tee run-linux run-payload run-fpga
+run-jump run-tee: qemu opensbi-jump optee_os linux-image
 	$(qemu_target) $(qemu_machine) $(qemu_args) \
 	-d guest_errors -D guest_log.txt \
 	-bios $(opensbi_jump_bin) \
@@ -200,7 +225,7 @@ run-jump: $(opensbi_jump_bin) $(optee_os_bin) $(linux_image)
 	-device loader,file=$(linux_image),addr=$(linux_start) \
 	-nographic
 
-run-payload: $(opensbi_payload_bin)
+run-linux run-payload: qemu opensbi-payload
 	$(qemu_target) $(qemu_machine) $(qemu_args) \
 	-d guest_errors -D guest_log.txt \
 	-bios $(opensbi_payload_bin) \

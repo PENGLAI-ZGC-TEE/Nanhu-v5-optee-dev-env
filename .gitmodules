@@ -1,6 +1,6 @@
 [submodule "qemu"]
 	path = qemu
-	url = https://github.com/PENGLAI-ZGC-TEE/qemu.git
+	url = https://github.com/OpenXiangShan/qemu.git
 [submodule "linux"]
 	path = linux
 	url = https://gitlab.com/riseproject/riscv-optee/linux.git

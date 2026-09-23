@@ -57,6 +57,7 @@
 			interrupts-extended = <&cpu0_intc 11 &cpu0_intc 9>;
 			riscv,max-priority = <7>;
 			riscv,ndev = <255>;
+			riscv,secure-irqs = <41>;
 		};
 
 		uart0: serial@310b0000 {

@@ -30,6 +30,7 @@ $(call force,CFG_RISCV_WITH_M_MODE_SM,y)
 
 # Device flags
 $(call force,CFG_RISCV_PLIC,y)
+$(call force,CFG_NANHU_PLIC_SECURE_EXT,y)
 $(call force,CFG_RISCV_SBI_CONSOLE,y)
 $(call force,CFG_16550_UART,n)
 $(call force,CFG_RISCV_TIME_SOURCE_RDTIME,y) # Maybe Nanhu-v3a doesn't support 0xC01 CSR

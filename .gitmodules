@@ -1,12 +1,12 @@
 [submodule "qemu"]
 	path = qemu
-	url = https://github.com/OpenXiangShan/qemu.git
+	url = https://github.com/PENGLAI-ZGC-TEE/QEMU_NanhuV5.git
 [submodule "linux"]
 	path = linux
-	url = https://gitlab.com/riseproject/riscv-optee/linux.git
+	url = https://github.com/PENGLAI-ZGC-TEE/RISE-Linux.git
 [submodule "optee_os"]
 	path = optee_os
-	url = https://gitlab.com/riseproject/riscv-optee/optee_os.git
+	url = https://github.com/PENGLAI-ZGC-TEE/RISE-optee.git
 [submodule "opensbi"]
 	path = opensbi
-	url = https://gitlab.com/riseproject/riscv-optee/opensbi.git
+	url = https://github.com/PENGLAI-ZGC-TEE/RISE-OpenSBI.git

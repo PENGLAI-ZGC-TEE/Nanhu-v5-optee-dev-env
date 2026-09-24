@@ -2,10 +2,10 @@
 
 ## Get the Sources
 
-After cloning the repository, initialize all submodules:
+After cloning the repository, initialize the four top-level submodules:
 
 ```bash
-git submodule update --init --recursive --progress
+git submodule update --init --progress
 ```
 
 The compressed root filesystem is tracked as

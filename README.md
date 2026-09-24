@@ -1,62 +1,117 @@
-# Development environment for building and testing OP-TEE OS on the Nanhu-v3a board
+# Nanhu V5 OP-TEE Development Environment
 
-## Download
-```
-git clone https://github.com/PENGLAI-ZGC-TEE/Nanhu-v3a-optee-dev-env.git
-cd Nanhu-v3a-optee-dev-env
+## Get the Sources
 
+After cloning the repository, initialize all submodules:
+
+```bash
 git submodule update --init --recursive --progress
 ```
 
-## Extract RootFS
-```
-gunzip ./config/rootfs_nopasswd.cpio.gz
+The compressed root filesystem is tracked as
+`config/rootfs_nopasswd.cpio.gz`. The Makefile generates the uncompressed
+archive automatically when Linux is built.
+
+To unpack the root filesystem for modification:
+
+```bash
+make rootfs-extract
 ```
 
-## Show help messages
+After changing files under `rootfs/`, repack it with:
+
+```bash
+make rootfs-pack
 ```
+
+## Build
+
+Show all supported targets:
+
+```bash
 make help
 ```
 
-## Build for jump pattern (jump to optee)
-```
-make qemu
-make optee_os
-make dtb
-make linux
-make opensbi-jump # jump to optee or linux
-```
+Build the QEMU, OP-TEE, Linux, DTB, and OpenSBI components used by the TEE
+boot flow:
 
-## Build for payload pattern (add just linux for payload)
-```
+```bash
 make qemu
 make optee_os
-make dtb
-make linux
-make opensbi-payload # just opensbi + linux
-```
-
-## Build for fpga pattern (merge opensbi + optee + linux as a bin)
-```
-make qemu
-make optee_os
-make dtb
-make linux
+make linux-image
 make opensbi-jump
-make merge
+```
+
+The main build outputs are:
+
+```text
+build/qemu/qemu-system-riscv64
+build/optee_os/core/tee.bin
+build/linux/arch/riscv/boot/Image
+build/nanhu-v5.dtb
+build/opensbi/platform/generic/firmware/fw_jump.bin
 ```
 
 ## Run
+
+Build missing components and start Linux with OP-TEE:
+
+```bash
+make run-tee
 ```
-make run-jump # run qemu for jump pattern
-make run-payload # run qemu for payload pattern
-make run-fpga # run qemu for fpga pattern
+
+Start Linux without OP-TEE, using the OpenSBI payload image:
+
+```bash
+make run-linux
 ```
+
+Build the merged OpenSBI, OP-TEE, and Linux image:
+
+```bash
+make merge
+```
+
+Run the merged image in QEMU:
+
+```bash
+make run-fpga
+```
+
+Use `Ctrl-a x` to exit the QEMU `-nographic` console.
 
 ## Debug
-```
-make debug
 
-# Then open another terminal
-gdb-multiarch --tui /path/to/Nanhu-v3a-optee-dev-env/build/optee_os/core/tee.elf
+Start QEMU with the GDB server enabled and the CPUs stopped at reset:
+
+```bash
+make debug
 ```
+
+In another terminal, load the OpenSBI, Linux, and OP-TEE symbols:
+
+```bash
+gdb-multiarch -x nanhu_gdbinit
+```
+
+## Clean
+
+Clean individual components:
+
+```bash
+make qemu-clean
+make linux-clean
+make optee_os-clean
+make opensbi-clean
+make dtb-clean
+make merge-clean
+```
+
+Remove all generated build outputs:
+
+```bash
+make clean-all
+```
+
+`guest_log.txt`, `build/`, and the generated uncompressed root filesystem are
+ignored by Git.

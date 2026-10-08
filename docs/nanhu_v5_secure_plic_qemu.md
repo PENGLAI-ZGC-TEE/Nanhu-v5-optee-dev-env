@@ -18,6 +18,38 @@
 `SEC_CTRL.LOCK` 置位后保持到 PLIC 复位。锁定期间不能修改 Enable 和
 `SEC_SRC`。
 
+### 1.1 SEC_SRC 位编号
+
+当前实现对齐 RTL `secure-interrupt-v2` 分支的
+[`e81b19ce`](https://github.com/H0b1e/rocket-chip-nanhu/commit/e81b19ce6ffdf6f44f0b9989fc7bb659759340d8)。
+`SEC_SRC` 与 pending/enable 一样，使用 IRQ ID 直接作为位编号，bit0 保留：
+
+```text
+word_offset = 0x4000 + 4 * (irq / 32)
+bit_mask    = 1 << (irq % 32)
+```
+
+| IRQ | SEC_SRC 偏移 | 位掩码 |
+|---|---:|---:|
+| 1 | `0x4000` | `0x00000002` |
+| 31 | `0x4000` | `0x80000000` |
+| 32 | `0x4004` | `0x00000001` |
+| 40 | `0x4004` | `0x00000100` |
+| 41 | `0x4004` | `0x00000200` |
+| 255 | `0x401c` | `0x80000000` |
+
+旧版使用 `irq - 1` 计算位编号，新版必须同时更新 QEMU 与 OpenSBI。
+只更新其中一侧会导致安全源错位。DTS 仍声明 IRQ ID，例如
+`riscv,secure-irqs = <41>`，不需要改成位掩码。
+
+QEMU 对保留的 bit0 和未实现的 source 位忽略写入；SEC_SRC 分配长度包含
+保留的 ID0。claim 锁存的 `IRQ_TRACK.req_sec` 使用同一个 ID 对应的安全属性。
+新版 RTL 还修复了 claim 属性索引错位，但原 QEMU 已按当前 IRQ 查询属性，
+因此这部分无需新增处理路径。
+
+安全扩展迁移子节版本升级为 2，不接受旧版位图格式的快照或迁移状态。
+升级时应退出旧 QEMU，重新编译并冷启动，不恢复旧快照。
+
 ## 2. 路由规则
 
 对给定 hart、context 和 source：
@@ -150,3 +182,71 @@ IRQ40 pending
 ```
 
 当前实现属于“延迟到 REE 再处理”
+
+## 4. 构建与回归验证
+
+本次适配不修改寄存器基址布局、world state 初值、WS_ACK、路由公式或
+complete 安全标志，也不实现 TEE 被非安全 IRQ 抢占后切回 REE 的软件协议。
+Linux 和 OP-TEE 的中断处理逻辑保持不变。
+
+在顶层目录构建 QEMU、OpenSBI，并执行独立的硬件模型回归测试：
+
+```sh
+make qemu opensbi-jump NPROC=8
+QTEST_QEMU_BINARY="$PWD/build/qemu/qemu-system-riscv64" \
+    ./build/qemu/tests/qtest/nanhu-secure-plic-test
+```
+
+测试不需要启动 Linux，也不修改 guest 镜像。7 项测试覆盖：
+
+- IRQ1/31/32/41/255 的属性读写与相邻源隔离，包含跨 32-bit 字边界。
+- REE/TEE 下安全与非安全源的 M/S claim 路由及 `IRQ_TRACK.req_sec`。
+- 无重复 claim、错误安全标志 complete 拒绝、合法 complete 和重放拒绝。
+- `SEC_CTRL.LOCK`、保留 bit0，以及安全中断在服时非安全 M claim 被阻断。
+
+运行系统级冒烟测试：
+
+```sh
+make run-tee NPROC=8
+```
+
+进入 Linux 后，以 root 执行：
+
+```sh
+devmem 0x3c004100 32
+devmem 0x3c004004 32
+devmem 0x3c004200 32
+cat /proc/interrupts
+ls -l /dev/tee*
+pidof tee-supplicant
+xtest 1006
+xtest 1009
+```
+
+在当前 DTS 只配置 IRQ41 为安全源的情况下，前三项读值依次为
+`0x00000003`、`0x00000200`、`0x00000000`。
+其中第二项不再是旧版的 `0x00000100`；新编号下该值表示 IRQ40 为安全源。
+Linux 串口仍使用非安全 IRQ40，TEE 设备和 tee-supplicant 应正常可用。
+QTest 验证的是硬件模型，不等同于四种场景的跨世界软件端到端验证；
+上述 xtest 也只是选定用例的冒烟测试，不代表全量测试通过。
+
+### 4.1 本次验证记录
+
+2026-10-08，使用上述构建和启动命令，在单 hart Nanhu V5 QEMU 上实测：
+
+| 检查项 | 结果 |
+|---|---|
+| QEMU / OpenSBI 编译 | 通过 |
+| secure PLIC QTest | 7/7 通过 |
+| Linux / OP-TEE 启动 | 进入 Buildroot root shell，OP-TEE driver 初始化成功 |
+| SEC_CTRL / SEC_SRC 第二字 / WORLD_STATE | `0x3` / `0x200` / `0x0` |
+| Linux UART0 | `/proc/interrupts` 显示 PLIC IRQ40，串口交互正常 |
+| TEE 用户态服务 | `/dev/tee0`、`/dev/teepriv0` 存在，tee-supplicant 运行 |
+| xtest 1006 | 通过，0 failed |
+| xtest 1009 | 1009.1、1009.2、1009.4 通过；1009.3 失败 |
+| 测试后 SEC_STATUS | `0x0`，未记录 complete 拒绝 |
+
+`1009.3` 的实际返回值是 `TEEC_SUCCESS`，而测试期望 `TEEC_ERROR_CANCEL`。
+现象与此前提供的取消测试失败日志一致，本次未修改相关逻辑，也未通过修改前后
+对照实验确定该失败的根因。不能据此宣称全量 xtest 通过。
+启动时仍有等待 `eth0` 超时的网络服务报错，不影响本次串口和 TEE 冒烟测试。

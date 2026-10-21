@@ -10,18 +10,40 @@
 |---|---:|---|---:|
 | `SEC_SRC` | `0x4000` | 每个 source 的安全属性，0 为 Non-secure，1 为 Secure | 0 |
 | `SEC_CTRL` | `0x4100` | bit0 Enable，bit1 Lock | 0 |
-| `WORLD_STATE` | `0x4200` | 每个 hart 的当前 S-world，0 为 REE，1 为 TEE | 1 |
-| `WS_ACK` | `0x4400` | world state 写入完成和回显 | `done + state` |
+| `WORLD_STATE` | `0x4200` | 每个 hart 的当前 S-world 只读视图，0 为 REE，1 为 TEE | 1 |
 | `IRQ_TRACK` | `0x4600` | 每个 context 的在服 IRQ、安全属性和有效位 | 0 |
 | `SEC_STATUS` | `0x4e00` | Complete 拒绝状态 | 0 |
 
 `SEC_CTRL.LOCK` 置位后保持到 PLIC 复位。锁定期间不能修改 Enable 和
 `SEC_SRC`。
 
-### 1.1 SEC_SRC 位编号
+### 1.1 MWS 世界状态接口
 
-当前实现对齐 RTL `secure-interrupt-v2` 分支的
-[`e81b19ce`](https://github.com/H0b1e/rocket-chip-nanhu/commit/e81b19ce6ffdf6f44f0b9989fc7bb659759340d8)。
+最新 RTL 不再允许软件通过 PLIC `WORLD_STATE` MMIO 修改世界状态，也删除了
+`0x4400` 的 `WS_ACK`。每个 Nanhu V5 hart 增加 M 态自定义 CSR `mws(0x3ff)`：
+
+```text
+mws.WS = 0  REE
+mws.WS = 1  TEE
+reset  = 1  TEE
+```
+
+`mws.WS` 从 CPU 输出，经 SoC 时钟域同步后直接送入 PLIC。PLIC 内部再进行两级
+采样，并把采样结果暴露在只读 `WORLD_STATE` 中。QEMU 使用 CPU 命名 GPIO
+`mws` 建模该硬件连线；OpenSBI 通过 CSR 写入切换世界，不再写 PLIC MMIO，
+也不再等待软件可见的 ACK。
+
+OpenSBI 写 `mws` 时仅暂时清除本 hart 的 `mie.MEIE`，写入后恢复原值。这一操作
+用于避免世界切换临界区被 M external interrupt 打断，不代表存在旧版 ACK
+握手。
+
+### 1.2 SEC_SRC 位编号
+
+当前实现对齐 Nanhu core
+[`c11437b6`](https://github.com/cuihu2/nanhu-v5-s/commit/c11437b65655a26b56a6d92e85363c13df7370c9)
+和 LinkNan
+[`4fb5c89f`](https://github.com/cuihu2/linknan-s/commit/4fb5c89f87d3ddc612795aa7e7ee73669ada1c7b)
+所采用的 PLIC 安全接口。
 `SEC_SRC` 与 pending/enable 一样，使用 IRQ ID 直接作为位编号，bit0 保留：
 
 ```text
@@ -185,9 +207,10 @@ IRQ40 pending
 
 ## 4. 构建与回归验证
 
-本次适配不修改寄存器基址布局、world state 初值、WS_ACK、路由公式或
-complete 安全标志，也不实现 TEE 被非安全 IRQ 抢占后切回 REE 的软件协议。
-Linux 和 OP-TEE 的中断处理逻辑保持不变。
+本次适配将 world state 更新方式从“PLIC MMIO 写入并轮询 WS_ACK”替换为
+“OpenSBI 写 CPU `mws` CSR，CPU 硬件信号驱动 PLIC”。world state 初值、路由
+公式、complete 安全标志保持不变，也不实现 TEE 被非安全 IRQ 抢占后切回
+REE 的软件协议。Linux 和 OP-TEE 的中断处理逻辑保持不变。
 
 在顶层目录构建 QEMU、OpenSBI，并执行独立的硬件模型回归测试：
 
@@ -197,12 +220,13 @@ QTEST_QEMU_BINARY="$PWD/build/qemu/qemu-system-riscv64" \
     ./build/qemu/tests/qtest/nanhu-secure-plic-test
 ```
 
-测试不需要启动 Linux，也不修改 guest 镜像。7 项测试覆盖：
+测试不需要启动 Linux，也不修改 guest 镜像。8 项测试覆盖：
 
 - IRQ1/31/32/41/255 的属性读写与相邻源隔离，包含跨 32-bit 字边界。
 - REE/TEE 下安全与非安全源的 M/S claim 路由及 `IRQ_TRACK.req_sec`。
 - 无重复 claim、错误安全标志 complete 拒绝、合法 complete 和重放拒绝。
 - `SEC_CTRL.LOCK`、保留 bit0，以及安全中断在服时非安全 M claim 被阻断。
+- `WORLD_STATE` 只能由 `mws` 硬件输入更新，MMIO 写入不能改变状态。
 
 运行系统级冒烟测试：
 
@@ -225,12 +249,31 @@ xtest 1009
 
 在当前 DTS 只配置 IRQ41 为安全源的情况下，前三项读值依次为
 `0x00000003`、`0x00000200`、`0x00000000`。
-其中第二项不再是旧版的 `0x00000100`；新编号下该值表示 IRQ40 为安全源。
+其中第二项不再是旧版的 `0x00000100`；新编号下该值表示 IRQ41 为安全源。
 Linux 串口仍使用非安全 IRQ40，TEE 设备和 tee-supplicant 应正常可用。
 QTest 验证的是硬件模型，不等同于四种场景的跨世界软件端到端验证；
 上述 xtest 也只是选定用例的冒烟测试，不代表全量测试通过。
 
-### 4.1 本次验证记录
+### 4.1 最新 RTL 接口适配验证记录
+
+2026-10-21，使用上述构建和启动命令，在单 hart Nanhu V5 QEMU 上实测：
+
+| 检查项 | 结果 |
+|---|---|
+| QEMU / OpenSBI / OP-TEE / Linux 编译 | 通过 |
+| secure PLIC QTest | 8/8 通过 |
+| `WORLD_STATE` MMIO 只读 | 通过；MMIO 写入不改变状态 |
+| `mws` CSR 切换 PLIC world state | 通过；QTest 写 CSR 并覆盖 0/1 两种状态 |
+| Linux / OP-TEE 启动 | 进入 Buildroot root shell，OP-TEE driver 初始化成功 |
+| SEC_CTRL / SEC_SRC 第二字 / WORLD_STATE | `0x3` / `0x200` / `0x0` |
+| MWS 端到端证据 | CPU 复位值为 1，OpenSBI 切换到 REE 后 Linux 读到 PLIC 状态 0 |
+| TEE 用户态服务 | `/dev/tee0`、`/dev/teepriv0` 存在，tee-supplicant PID 为 82 |
+| xtest 1006 | 通过，0 failed |
+
+启动时等待 `eth0` 超时是当前板级网络设备未提供导致的既有现象，不影响本次
+PLIC、串口与 TEE 冒烟验证。
+
+### 4.2 历史验证记录
 
 2026-10-08，使用上述构建和启动命令，在单 hart Nanhu V5 QEMU 上实测：
 

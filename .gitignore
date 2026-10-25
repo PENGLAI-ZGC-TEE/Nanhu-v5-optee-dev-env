@@ -16,3 +16,6 @@ rootfs/
 guest_log.txt
 
 config/*.cpio
+# clangd
+compile_commands.json
+.cache/

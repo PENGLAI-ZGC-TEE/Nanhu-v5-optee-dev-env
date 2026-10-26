@@ -48,6 +48,14 @@ opensbi_srcdir := $(CURRENT_DIR)/opensbi
 opensbi_builddir := $(BUILD_DIR)/opensbi
 opensbi_bindir := $(opensbi_builddir)/platform/generic/firmware
 opensbi_jump_bin := $(opensbi_bindir)/fw_jump.bin
+
+# Foreign-interrupt preemption test Variables
+preempt_test_srcdir := $(CURRENT_DIR)/tests/preempt_ta
+preempt_test_builddir := $(BUILD_DIR)/preempt_test
+preempt_test_uuid := 65dca01d-cd82-4b02-98bb-c980a3657545
+preempt_test_ta := $(preempt_test_builddir)/ta/$(preempt_test_uuid).ta
+preempt_test_host := $(preempt_test_builddir)/preempt_test
+ta_dev_kit_dir := $(optee_os_builddir)/export-ta_rv64
 opensbi_jump_elf := $(opensbi_bindir)/fw_jump.elf
 opensbi_payload_bin := $(opensbi_bindir)/fw_payload.bin
 opensbi_start := 0x80000000
@@ -76,6 +84,8 @@ help:
 	@echo "  dtb              Generate Device Tree Blob (DTB)"
 	@echo "  rootfs-extract   Extract root filesystem from cpio archive"
 	@echo "  rootfs-pack      Pack root filesystem into cpio archive"
+	@echo "  preempt-test     Build the foreign-interrupt preemption test TA and host app"
+	@echo "  preempt-test-install  Add the preemption test to the rootfs (then rebuild linux-image)"
 	@echo "  run-jump         Run QEMU with one built images, but it's just a jump, won't be packaged together"
 	@echo "  run-tee          Run Nanhu V5 Linux with OP-TEE"
 	@echo "  run-linux        Run Nanhu V5 Linux without OP-TEE"
@@ -90,6 +100,7 @@ help:
 	@echo "  optee_os-clean   Clean OP-TEE OS build directory"
 	@echo "  dtb-clean        Clean generated Device Tree Blob (DTB)"
 	@echo "  opensbi-clean    Clean OpenSBI build directory"
+	@echo "  preempt-test-clean  Clean the preemption test build directory"
 	@echo "  merge-clean      Clean OpenSBI Linux Op-TEE merge file"
 	@echo "  clean-all        Clean all generated file"
 
@@ -170,6 +181,35 @@ optee_os:
 	$(MAKE) -C $(optee_os_srcdir) O=$(optee_os_builddir) -j $(NPROC) \
 	ARCH=riscv PLATFORM=nanhu
 	rm -rf $(optee_os_srcdir)/core/arch/riscv/plat-nanhu
+
+###########
+# foreign-interrupt preemption test
+###########
+.PHONY: preempt-test preempt-test-install
+preempt-test:
+	test -f $(ta_dev_kit_dir)/mk/ta_dev_kit.mk || $(MAKE) optee_os
+	mkdir -p $(preempt_test_builddir)/ta
+	$(MAKE) -C $(preempt_test_srcdir)/ta \
+	CROSS_COMPILE=$(CROSS_COMPILE) \
+	TA_DEV_KIT_DIR=$(ta_dev_kit_dir) \
+	O=$(preempt_test_builddir)/ta
+	$(CROSS_COMPILE)gcc -static -O2 -Wall -Wextra \
+	-I$(preempt_test_srcdir)/include \
+	-o $(preempt_test_host) $(preempt_test_srcdir)/host/main.c
+
+# Regenerate the base cpio from the tracked archive and append an overlay
+# archive holding the test; the kernel unpacks concatenated cpio archives.
+preempt-test-install: preempt-test
+	rm -rf $(preempt_test_builddir)/overlay
+	mkdir -p $(preempt_test_builddir)/overlay/lib/optee_armtz
+	mkdir -p $(preempt_test_builddir)/overlay/usr/bin
+	install -m 0444 $(preempt_test_ta) \
+	$(preempt_test_builddir)/overlay/lib/optee_armtz/
+	install -m 0755 $(preempt_test_host) \
+	$(preempt_test_builddir)/overlay/usr/bin/
+	gunzip -c $(rootfs_archive) > $(rootfs_target)
+	cd $(preempt_test_builddir)/overlay && \
+	find . -mindepth 1 | cpio -o -H newc -R 0:0 >> $(rootfs_target)
 
 ###########
 # merge
@@ -256,7 +296,7 @@ debug: $(merge_payload_bin)
 ###########
 # clean
 ###########
-.PHONY: qemu-clean qemu-distclean linux-clean linux-distclean optee_os-clean dtb-clean opensbi-clean merge-clean clean-all
+.PHONY: qemu-clean qemu-distclean linux-clean linux-distclean optee_os-clean dtb-clean opensbi-clean preempt-test-clean merge-clean clean-all
 qemu-clean:
 	$(MAKE) -C $(qemu_builddir) clean
 
@@ -279,6 +319,9 @@ dtb-clean:
 opensbi-clean:
 	rm -rf $(opensbi_builddir)
 
+preempt-test-clean:
+	rm -rf $(preempt_test_builddir)
+
 merge-clean:
 	rm -rf $(merge_payload_bin)
 
@@ -289,4 +332,5 @@ clean-all:
 	rm -rf $(optee_os_srcdir)/core/arch/riscv/plat-nanhu
 	rm -f $(dtb_file)
 	rm -rf $(opensbi_builddir)
+	rm -rf $(preempt_test_builddir)
 	rm -rf $(merge_payload_bin)

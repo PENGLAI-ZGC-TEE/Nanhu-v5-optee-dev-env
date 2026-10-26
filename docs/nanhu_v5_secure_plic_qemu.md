@@ -205,12 +205,20 @@ IRQ40 pending
 
 当前实现属于“延迟到 REE 再处理”
 
+> 注：当为该非安全源配置 `riscv,ree-preempt-irqs` 后，TEE 可被其**主动抢占**，
+> 由 OpenSBI 重入 OP-TEE 挂起安全线程再切回 REE 处理。详见
+> [`opensbi_optee_foreign_intr_preemption.md`](./opensbi_optee_foreign_intr_preemption.md)。
+
 ## 4. 构建与回归验证
 
 本次适配将 world state 更新方式从“PLIC MMIO 写入并轮询 WS_ACK”替换为
 “OpenSBI 写 CPU `mws` CSR，CPU 硬件信号驱动 PLIC”。world state 初值、路由
 公式、complete 安全标志保持不变，也不实现 TEE 被非安全 IRQ 抢占后切回
 REE 的软件协议。Linux 和 OP-TEE 的中断处理逻辑保持不变。
+
+> 后续工作：TEE 被非安全 IRQ 抢占并切回 REE 的软件协议已在
+> [`opensbi_optee_foreign_intr_preemption.md`](./opensbi_optee_foreign_intr_preemption.md)
+> 中单独设计实现（OpenSBI 侧改动 + 一条 DTS 属性，OP-TEE/Linux 无需改动）。
 
 在顶层目录构建 QEMU、OpenSBI，并执行独立的硬件模型回归测试：
 

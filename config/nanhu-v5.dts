@@ -58,6 +58,7 @@
 			riscv,max-priority = <7>;
 			riscv,ndev = <255>;
 			riscv,secure-irqs = <41>;
+			riscv,ree-preempt-irqs = <40>;
 		};
 
 		uart0: serial@310b0000 {
